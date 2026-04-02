@@ -392,6 +392,9 @@ class Raycast(bonsai.core.tool.Raycast):
         edge_verts = {}
         for e in edges:
             verts_idx = tuple(snap_obj.obj.data.edges[e].vertices)
+            # Guard against stale cache or degenerate edges
+            if len(verts_idx) < 2 or any(idx >= len(verts_2d) for idx in verts_idx):
+                continue
             verts = snap_obj.obj.data.vertices
             v1 = snap_obj.obj.matrix_world @ verts[verts_idx[0]].co
             v1_2d = verts_2d[verts_idx[0]]
@@ -894,8 +897,12 @@ class Raycast(bonsai.core.tool.Raycast):
 
     @classmethod
     def create_snap_obj(cls, obj):
-        for snap_obj in cls.snap_objs:
+        for i, snap_obj in enumerate(cls.snap_objs):
             if obj.name == snap_obj.obj.name:
+                if len(obj.data.vertices) != snap_obj.vertex_count or obj.matrix_world != snap_obj.matrix_world:
+                    # Stale mesh or moved object, invalidate cache
+                    cls.snap_objs.pop(i)
+                    break
                 return snap_obj
         snap_obj = SnapObj(obj)
         cls.snap_objs.append(snap_obj)
@@ -931,10 +938,12 @@ class SnapObj:
     def __init__(self, obj: bpy.types.Object):
         self.__class__.all.append(self)
         self.obj = obj
+        self.matrix_world = obj.matrix_world.copy()
+        self.vertex_count = len(obj.data.vertices)
         self.root = self._create_root_node()
         self.root.edges = [e.index for e in obj.data.edges]
         self.split_box(self.root, 0)
-        self.verts_3d = [obj.matrix_world @ v.co for v in obj.data.vertices]
+        self.verts_3d = [self.matrix_world @ v.co for v in obj.data.vertices]
         self.snap_points = []
 
     def __clear_all__():
